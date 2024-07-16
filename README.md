@@ -6,7 +6,7 @@
     > 检验方式：在终端中输入命令  
     `ls $GAZEBO_MODEL_PATH | grep quadrotor`  
     如果没有返回值，可能未安装该模型，也可能是 Gazebo 默认的模型路径未指向安装位置。  
-    模型下载参考 [https://bbs.csdn.net/topics/616849315](https://bbs.csdn.net/topics/616849315)
+    模型下载参考 https://bbs.csdn.net/topics/616849315
 1. Python版本：3.10.12，已安装 numpy 和 quaternion 包。
     > `pip3 install numpy`  
     `pip3 install numpy-quaternion`
@@ -15,7 +15,7 @@
 `cd ~`  
 `mkdir -p quadrotor_ws/src/quadrotor_formation`  
 `cd quadrotor_ws/src/quadrotor_formation`  
-`git clone https://github.com/GreenZhu233/Robotics-Experiments_planar-2DOF-robot.git`
+`git clone https://github.com/GreenZhu233/quadrotor-circle-formation.git`
 
 ## 编译功能包
 `cd ~/quadrotor_ws`  
