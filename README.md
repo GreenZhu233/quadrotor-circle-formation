@@ -1,4 +1,4 @@
-## 运行环境
+## 环境
 1. 系统：Ubuntu 22.04.2
 1. ROS2版本：ROS2-Humble
 1. Gazebo 11.10.2
@@ -11,13 +11,13 @@
     > `pip3 install numpy`  
     `pip3 install numpy-quaternion`
 
-## 安装功能包
+## 安装
 `cd ~`  
 `mkdir -p quadrotor_ws/src/quadrotor_formation`  
 `cd quadrotor_ws/src/quadrotor_formation`  
 `git clone https://github.com/GreenZhu233/quadrotor-circle-formation.git`
 
-## 编译功能包
+## 编译
 `cd ~/quadrotor_ws`  
 `colcon build`
 
