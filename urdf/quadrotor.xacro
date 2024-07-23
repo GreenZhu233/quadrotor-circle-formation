@@ -22,7 +22,7 @@
   </link>
 
   <gazebo>
-    <!-- 给无人机施加力 -->
+    <!-- 给无人机施加力和力矩 -->
     <plugin name="gazebo_ros_force" filename="libgazebo_ros_force.so">
       <ros>
         <namespace>/$(arg namespace)</namespace>
@@ -34,7 +34,7 @@
       <force_frame>world</force_frame>
     </plugin>
 
-    <!-- 提供无人机的位置和速度信息 -->
+    <!-- 提供无人机的位姿和速度信息 -->
     <plugin name="robot_pos" filename="libgazebo_ros_p3d.so">
       <ros>
         <namespace>/$(arg namespace)</namespace>
