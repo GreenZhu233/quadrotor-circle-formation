@@ -7,9 +7,11 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import numpy as np
 import quaternion as qt
+from functools import cmp_to_key
 
 sim_time = 0.0  # 仿真时间
 gravity = 9.8   # 重力加速度
+frame = 1
 
 class Quadrotor:
     def __init__(self, id:int, namespace:str, mass:float, inertia:list[float]):
@@ -17,6 +19,13 @@ class Quadrotor:
         self.namespace = namespace
         self.mass = mass
         self.inertia = inertia  # 主轴坐标系下的惯量
+        self.theta = 0.0
+
+        self.integral_error_vx = 0
+        self.integral_error_vy = 0
+        self.previous_error_vx = 0
+        self.previous_error_vy = 0
+        self.previous_sim_time = 0
 
     # 订阅Odometry信息的回调函数
     def odom_callback(self, msg:Odometry):
@@ -44,20 +53,26 @@ class Quadrotor:
 
     # 返回实现无人机期望速度的力
     def velocity_control(self, desired_vx, desired_vy, desired_height):
-        max_velocity = 5
-        max_acceleration = 10
-        kp = 1
-        kd = -3
-        force_z = self.mass * (kd * self.vz + kp * (desired_height - self.z) + gravity)
-        kv = 10
-        desired_v = np.linalg.norm([desired_vx, desired_vy])
-        if desired_v > max_velocity:
-            desired_vx, desired_vy = desired_vx / desired_v * max_velocity, desired_vy / desired_v * max_velocity
-        ax = kv * (desired_vx - self.vx)
-        ay = kv * (desired_vy - self.vy)
-        acceleration = np.linalg.norm([ax, ay])
-        if acceleration > max_acceleration:
-            ax, ay = ax / acceleration * max_acceleration, ay / acceleration * max_acceleration
+        # z方向
+        kp_z = 1
+        kd_z = 3
+        force_z = self.mass * (-kd_z * self.vz + kp_z * (desired_height - self.z) + gravity)
+        # xy方向
+        dt = sim_time - self.previous_sim_time
+        kp_xy = 3
+        ki_xy = 0.1
+        kd_xy = 0.5
+        error_vx = desired_vx - self.vx
+        error_vy = desired_vy - self.vy
+        self.integral_error_vx += error_vx * dt
+        self.integral_error_vy += error_vy * dt
+        derivative_error_vx = (error_vx - self.previous_error_vx) / dt
+        derivative_error_vy = (error_vy - self.previous_error_vy) / dt
+        ax = kp_xy * error_vx + ki_xy * self.integral_error_vx / frame + kd_xy * derivative_error_vx
+        ay = kp_xy * error_vy + ki_xy * self.integral_error_vy / frame + kd_xy * derivative_error_vy
+        self.previous_error_vx = error_vx
+        self.previous_error_vy = error_vy
+        self.previous_sim_time = sim_time
         force_x = self.mass * ax
         force_y = self.mass * ay
         return np.array([force_x, force_y, force_z])
@@ -83,17 +98,17 @@ class Quadrotor:
 
 # LIMIT-CYCLE-BASED DECOUPLED CONTROL
 def circle_formation_control(radius, p_bar, p_hat, p_hat_minus, d, d_minus):
-    Lambda, Gamma, C1, C2 = 1, 0.05, 0.4, 1.0
+    Lambda, Gamma, C1, C2 = 1.2, 0.01, 0.4, 1.0
     p_bar = np.array(p_bar)
     p_hat = np.array(p_hat)
     p_hat_minus = np.array(p_hat_minus)
     p_bar_plus = p_bar + p_hat
     p_bar_minus = p_bar - p_hat_minus
     alpha = np.arctan2(np.cross(p_bar, p_bar_plus), np.dot(p_bar, p_bar_plus))
-    if alpha < 0:
+    if alpha < -0.1:
         alpha += 2*np.pi
     alpha_minus = np.arctan2(np.cross(p_bar_minus, p_bar), np.dot(p_bar_minus, p_bar))
-    if alpha_minus < 0:
+    if alpha_minus < -0.1:
         alpha_minus += 2*np.pi
     l = radius**2 - np.linalg.norm(p_bar)**2
     u_p = Lambda * np.array([Gamma*l, -1, 1, Gamma*l]).reshape(2, 2) @ p_bar
@@ -124,7 +139,23 @@ class SteeringNode(Node):
                                                      callback_group=self.callback_group))
 
     def counterclockwise_sort(self, center):
-        self.quadlist.sort(key = lambda quad: np.arctan2(quad.y - center[1], quad.x - center[0]))   # [-pi, pi)
+        for quad in self.quadlist:
+            quad.theta = np.arctan2(quad.y - center[1], quad.x - center[0])
+        def cmp(quad1: Quadrotor, quad2: Quadrotor):
+            delta_theta = quad1.theta - quad2.theta
+            if delta_theta < -0.1:
+                return -1
+            elif delta_theta > 0.1:
+                return 1
+            else:
+                r1 = np.linalg.norm([quad1.x - center[0], quad1.y - center[1]])
+                r2 = np.linalg.norm([quad2.x - center[0], quad2.y - center[1]])
+                if r1 < r2:
+                    return -1
+                else:
+                    return 1
+        self.quadlist.sort(key = cmp_to_key(cmp))
+        # self.get_logger().info("排序后："+str([quad.id for quad in self.quadlist]))
 
     def send_wrench(self, quadrotor:Quadrotor, force = [0.0, 0.0, 0.0], torque=[0.0, 0.0, 0.0]):
         msg = Wrench()
@@ -193,10 +224,12 @@ def main(args=None):
     p_bar = [[0, 0]] * num   # 各无人机相对圆环中心的位置x,y坐标
     p_hat = [[0, 0]] * num   # 相邻无人机的相对位置
     d = [2 * np.pi / num] * num  # 无人机的目标角距离
-    count = 0
+    node.counterclockwise_sort(center)
+    previous_sim_time = sim_time
     while(rclpy.ok()):
-        if count % 30 == 0:
-            node.counterclockwise_sort(center)  # 隔一段时间进行一次修正排序
+        if sim_time - previous_sim_time < 0.01:
+            rate.sleep()
+            continue
         for i, quad in enumerate(node.quadlist):
             p_bar[i] = quad.x - center[0], quad.y - center[1]
         for i in range(-1, num-1):
@@ -205,6 +238,8 @@ def main(args=None):
             desired_vx, desired_vy = circle_formation_control(radius, p_bar[i], p_hat[i], p_hat[i-1], d[i], d[i-1])
             force, torque = quad.vel_ori_control(desired_vx, desired_vy, center[2])
             node.send_wrench(quad, force, torque)
-        count += 1
+        global frame
+        frame += 1
+        previous_sim_time = sim_time
         rate.sleep()
     rclpy.shutdown()
