@@ -3,13 +3,14 @@ from rclpy.node import Node
 from geometry_msgs.msg import Wrench
 from nav_msgs.msg import Odometry
 import threading
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import numpy as np
 import quaternion as qt
 from functools import cmp_to_key
 
 sim_time = 0.0  # 仿真时间
+sim_time_lock = threading.Lock()
 gravity = 9.8   # 重力加速度
 frame = 1
 
@@ -27,43 +28,62 @@ class Quadrotor:
         self.previous_error_vy = 0
         self.previous_sim_time = 0
 
+        # 创建线程锁
+        self.xy_lock = threading.Lock()
+        self.z_lock = threading.Lock()
+        self.v_lock = threading.Lock()
+        self.ori_lock = threading.Lock()
+        self.w_lock = threading.Lock()
+
     # 订阅Odometry信息的回调函数
     def odom_callback(self, msg:Odometry):
         # 获取当前位置
-        self.x = msg.pose.pose.position.x
-        self.y = msg.pose.pose.position.y
-        self.z = msg.pose.pose.position.z
+        with self.xy_lock:
+            self.x = msg.pose.pose.position.x
+            self.y = msg.pose.pose.position.y
+        with self.z_lock:
+            self.z = msg.pose.pose.position.z
         # 获取当前姿态
-        self.ori = qt.from_float_array([msg.pose.pose.orientation.w,
-                    msg.pose.pose.orientation.x,
-                    msg.pose.pose.orientation.y,
-                    msg.pose.pose.orientation.z,
-                    ])
+        with self.ori_lock:
+            self.ori = qt.from_float_array([msg.pose.pose.orientation.w,
+                msg.pose.pose.orientation.x,
+                msg.pose.pose.orientation.y,
+                msg.pose.pose.orientation.z,
+                ])
         # 获取当前速度
-        self.vx = msg.twist.twist.linear.x
-        self.vy = msg.twist.twist.linear.y
-        self.vz = msg.twist.twist.linear.z
+        with self.v_lock:
+            self.vx = msg.twist.twist.linear.x
+            self.vy = msg.twist.twist.linear.y
+            self.vz = msg.twist.twist.linear.z
         # 获取当前角速度
-        self.wx = msg.twist.twist.angular.x
-        self.wy = msg.twist.twist.angular.y
-        self.wz = msg.twist.twist.angular.z
+        with self.w_lock:
+            self.wx = msg.twist.twist.angular.x
+            self.wy = msg.twist.twist.angular.y
+            self.wz = msg.twist.twist.angular.z
         # 更新时间
         global sim_time
-        sim_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        with sim_time_lock:
+            sim_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
     # 返回实现无人机期望速度的力
     def velocity_control(self, desired_vx, desired_vy, desired_height):
+        with self.v_lock:
+            vx = self.vx
+            vy = self.vy
+            vz = self.vz
+        with self.z_lock:
+            z = self.z
         # z方向
         kp_z = 1
         kd_z = 3
-        force_z = self.mass * (-kd_z * self.vz + kp_z * (desired_height - self.z) + gravity)
+        force_z = self.mass * (-kd_z * vz + kp_z * (desired_height - z) + gravity)
         # xy方向
         dt = sim_time - self.previous_sim_time
         kp_xy = 3
         ki_xy = 0.1
         kd_xy = 0.5
-        error_vx = desired_vx - self.vx
-        error_vy = desired_vy - self.vy
+        error_vx = desired_vx - vx
+        error_vy = desired_vy - vy
         self.integral_error_vx += error_vx * dt
         self.integral_error_vy += error_vy * dt
         derivative_error_vx = (error_vx - self.previous_error_vx) / dt
@@ -79,10 +99,14 @@ class Quadrotor:
 
     # 返回实现无人机期望姿态的力矩
     def orientation_control(self, desired_quat = np.quaternion(1, 0, 0, 0)):
+        with self.ori_lock:
+            ori = self.ori
+        with self.w_lock:
+            wx, wy, wz = self.wx, self.wy, self.wz
         kp = np.array(self.inertia) * 2
         kd = np.array(self.inertia) * 10
-        error_quat = desired_quat * self.ori.inverse()
-        torque = kp * np.array([error_quat.x, error_quat.y, error_quat.z])- kd * np.array([self.wx, self.wy, self.wz])
+        error_quat = desired_quat * ori.inverse()
+        torque = kp * np.array([error_quat.x, error_quat.y, error_quat.z])- kd * np.array([wx, wy, wz])
         return torque
 
     # 将前两个函数结合，实现根据期望速度自动调整无人机的姿态
@@ -127,7 +151,7 @@ class SteeringNode(Node):
 
         self.pub = []
         self.sub = []
-        self.callback_group = MutuallyExclusiveCallbackGroup()
+        self.callback_group = ReentrantCallbackGroup()
         for quad in self.quadlist:
             # 创建Wrench发布者
             self.pub.append(self.create_publisher(Wrench, f"{quad.namespace}/gazebo_ros_force", 10))
@@ -186,24 +210,27 @@ def main(args=None):
     radius = 5.0
 
     # 等待3秒
-    while sim_time - start_time < 3.0:
-        if not rclpy.ok():
-            break
+    while rclpy.ok():
+        with sim_time_lock:
+            if sim_time - start_time > 3.0:
+                break
         rate.sleep()
 
     # 2秒内起飞到目标高度
     az = center[2] - node.quadlist[0].z     # z方向加速度
-    while sim_time - start_time < 4.0:
-        if not rclpy.ok():
-            break
+    while rclpy.ok():
+        with sim_time_lock:
+            if sim_time - start_time > 4.0:
+                break
         for quad in node.quadlist:
             force = [0.0, 0.0, quad.mass * (gravity + az)]
             torque = quad.orientation_control()
             node.send_wrench(quad, force, torque)
         rate.sleep()
-    while sim_time - start_time < 5.0:
-        if not rclpy.ok():
-            break
+    while rclpy.ok():
+        with sim_time_lock:
+            if sim_time - start_time > 5.0:
+                break
         for quad in node.quadlist:
             force = [0.0, 0.0, quad.mass * (gravity - az)]
             torque = quad.orientation_control()
@@ -211,9 +238,10 @@ def main(args=None):
         rate.sleep()
 
     # 等待1秒
-    while sim_time - start_time < 6.0:
-        if not rclpy.ok():
-            break
+    while rclpy.ok():
+        with sim_time_lock:
+            if sim_time - start_time > 6.0:
+                break
         for quad in node.quadlist:
             force, torque = quad.vel_ori_control(0.0, 0.0, center[2])
             node.send_wrench(quad, force, torque)
@@ -225,13 +253,18 @@ def main(args=None):
     p_hat = [[0, 0]] * num   # 相邻无人机的相对位置
     d = [2 * np.pi / num] * num  # 无人机的目标角距离
     node.counterclockwise_sort(center)
-    previous_sim_time = sim_time
-    while(rclpy.ok()):
-        if sim_time - previous_sim_time < 0.01:
-            rate.sleep()
-            continue
+    with sim_time_lock:
+        previous_sim_time = sim_time
+    while rclpy.ok():
+        with sim_time_lock:
+            if sim_time - previous_sim_time < 0.01:
+                rate.sleep()
+                continue
+            else:
+                previous_sim_time = sim_time
         for i, quad in enumerate(node.quadlist):
-            p_bar[i] = quad.x - center[0], quad.y - center[1]
+            with quad.xy_lock:
+                p_bar[i] = quad.x - center[0], quad.y - center[1]
         for i in range(-1, num-1):
             p_hat[i] = p_bar[i+1][0] - p_bar[i][0], p_bar[i+1][1] - p_bar[i][1]
         for i, quad in enumerate(node.quadlist):
@@ -240,6 +273,5 @@ def main(args=None):
             node.send_wrench(quad, force, torque)
         global frame
         frame += 1
-        previous_sim_time = sim_time
         rate.sleep()
     rclpy.shutdown()
