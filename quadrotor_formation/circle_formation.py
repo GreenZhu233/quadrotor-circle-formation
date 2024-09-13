@@ -113,10 +113,10 @@ class Quadrotor:
     def vel_ori_control(self, desired_vx, desired_vy, desired_height):
         force = self.velocity_control(desired_vx, desired_vy, desired_height)
         axis = np.cross(np.array([0,0,1]), force)
-        sine = np.linalg.norm(axis) / np.linalg.norm(force)
-        w = np.dot(np.array([0,0,1]), force) / np.linalg.norm(force)
+        theta = np.arctan2(np.linalg.norm(axis), np.dot(np.array([0,0,1]), force))
+        w = np.cos(theta / 2)
         axis = axis / np.linalg.norm(axis)
-        x, y, z = axis * sine
+        x, y, z = axis * np.sin(theta / 2)
         torque = self.orientation_control(np.quaternion(w, x, y, z))
         return force, torque
 
