@@ -15,8 +15,8 @@
 
 ## 克隆
 `cd ~`  
-`mkdir -p quadrotor_ws/src/quadrotor_formation`  
-`cd quadrotor_ws/src/quadrotor_formation`  
+`mkdir -p quadrotor_formation_ws/src`  
+`cd quadrotor_formation_ws/src`  
 `git clone https://github.com/GreenZhu233/quadrotor-circle-formation.git`
 
 ## 编译
