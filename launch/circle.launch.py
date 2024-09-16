@@ -13,7 +13,7 @@ def generate_launch_description():
     pkg = FindPackageShare(package_name).find(package_name)
     xacro_file = os.path.join(pkg, 'urdf', 'quadrotor.xacro')
 
-    num_of_quadrotors = 7
+    num_of_quadrotors = 5
     rand = random.sample(range(100), num_of_quadrotors)
     x = [(num // 10) * 2 - 9 for num in rand]
     y = [(num % 10) * 2 - 9 for num in rand]
@@ -52,7 +52,7 @@ def generate_launch_description():
     circle_formation_node = Node(
         package=package_name, executable='circle_formation_node',
         output='screen',
-        parameters=[{'num_of_quadrotors': num_of_quadrotors,}]
+        parameters=[{'num_of_quadrotors': num_of_quadrotors, 'center_x': 5.0}]
     )
     ld.add_action(circle_formation_node)
 

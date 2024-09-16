@@ -14,6 +14,10 @@ sim_time_lock = threading.Lock()
 gravity = 9.8   # 重力加速度
 frame = 1
 
+# 目标圆
+center = [0.0,0.0,4.0]
+radius = 5.0
+
 class Quadrotor:
     def __init__(self, id:int, namespace:str, mass:float, inertia:list[float]):
         self.id = id
@@ -146,7 +150,14 @@ class SteeringNode(Node):
         super().__init__(name)
         self.get_logger().info(f"Steering node {name} is started")
         self.declare_parameter("num_of_quadrotors", 5)
+        self.declare_parameter("center_x", 0.0)
+        self.declare_parameter("center_y", 0.0)
+        self.declare_parameter("center_z", 4.0)
         num_of_quadrotors = self.get_parameter("num_of_quadrotors").get_parameter_value().integer_value
+        global center
+        center[0] = self.get_parameter("center_x").get_parameter_value().double_value
+        center[1] = self.get_parameter("center_y").get_parameter_value().double_value
+        center[2] = self.get_parameter("center_z").get_parameter_value().double_value
         self.quadlist = [Quadrotor(i, f"/quad_{i}", 1.316, [0.0128, 0.0128, 0.0218]) for i in range(num_of_quadrotors)]
 
         self.pub = []
@@ -204,10 +215,6 @@ def main(args=None):
     executor.add_node(node)
     odom_thread = threading.Thread(target=executor.spin)
     odom_thread.start()
-
-    # 目标圆
-    center = [0.0,0.0,4.0]
-    radius = 5.0
 
     # 等待3秒
     while rclpy.ok():
