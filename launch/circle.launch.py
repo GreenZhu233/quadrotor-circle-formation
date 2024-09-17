@@ -1,8 +1,9 @@
 import os
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess
+from launch.actions import IncludeLaunchDescription
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 import xacro
 import random
 
@@ -20,9 +21,16 @@ def generate_launch_description():
     spawn_position = [[x[i], y[i], 0.3] for i in range(num_of_quadrotors)]
 
     # 启动Gazebo
-    gazebo = ExecuteProcess(
-        cmd=['gazebo', '-s', 'libgazebo_ros_init.so', '-s', 'libgazebo_ros_factory.so'],
-        output='screen')
+    gazebo = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    FindPackageShare('gazebo_ros').find('gazebo_ros'),
+                    'launch',
+                    'gazebo.launch.py'
+                )
+            ),
+            launch_arguments={'use_sim_time': 'true'}.items()
+        )
     ld.add_action(gazebo)
 
     for i in range(num_of_quadrotors):
