@@ -2,17 +2,19 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Wrench
 from nav_msgs.msg import Odometry
+from rosgraph_msgs.msg import Clock
 import threading
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import ReliabilityPolicy, QoSProfile
 import numpy as np
 import quaternion as qt
 from functools import cmp_to_key
 
 sim_time = 0.0  # 仿真时间
-sim_time_lock = threading.Lock()
 gravity = 9.8   # 重力加速度
 frame = 1
+callback_complete = []
 
 # 目标圆
 center = [0.0,0.0,4.0]
@@ -32,51 +34,36 @@ class Quadrotor:
         self.previous_error_vy = 0
         self.previous_sim_time = 0
 
-        # 创建线程锁
-        self.xy_lock = threading.Lock()
-        self.z_lock = threading.Lock()
-        self.v_lock = threading.Lock()
-        self.ori_lock = threading.Lock()
-        self.w_lock = threading.Lock()
-
     # 订阅Odometry信息的回调函数
     def odom_callback(self, msg:Odometry):
+        if callback_complete[self.id] == True:
+            return
         # 获取当前位置
-        with self.xy_lock:
-            self.x = msg.pose.pose.position.x
-            self.y = msg.pose.pose.position.y
-        with self.z_lock:
-            self.z = msg.pose.pose.position.z
+        self.x = msg.pose.pose.position.x
+        self.y = msg.pose.pose.position.y
+        self.z = msg.pose.pose.position.z
         # 获取当前姿态
-        with self.ori_lock:
-            self.ori = qt.from_float_array([msg.pose.pose.orientation.w,
-                msg.pose.pose.orientation.x,
-                msg.pose.pose.orientation.y,
-                msg.pose.pose.orientation.z,
-                ])
+        self.ori = qt.from_float_array([msg.pose.pose.orientation.w,
+            msg.pose.pose.orientation.x,
+            msg.pose.pose.orientation.y,
+            msg.pose.pose.orientation.z,
+            ])
         # 获取当前速度
-        with self.v_lock:
-            self.vx = msg.twist.twist.linear.x
-            self.vy = msg.twist.twist.linear.y
-            self.vz = msg.twist.twist.linear.z
+        self.vx = msg.twist.twist.linear.x
+        self.vy = msg.twist.twist.linear.y
+        self.vz = msg.twist.twist.linear.z
         # 获取当前角速度
-        with self.w_lock:
-            self.wx = msg.twist.twist.angular.x
-            self.wy = msg.twist.twist.angular.y
-            self.wz = msg.twist.twist.angular.z
-        # 更新时间
-        global sim_time
-        with sim_time_lock:
-            sim_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.wx = msg.twist.twist.angular.x
+        self.wy = msg.twist.twist.angular.y
+        self.wz = msg.twist.twist.angular.z
+        callback_complete[self.id] = True
 
     # 返回实现无人机期望速度的力
     def velocity_control(self, desired_vx, desired_vy, desired_height):
-        with self.v_lock:
-            vx = self.vx
-            vy = self.vy
-            vz = self.vz
-        with self.z_lock:
-            z = self.z
+        vx = self.vx
+        vy = self.vy
+        vz = self.vz
+        z = self.z
         # z方向
         kp_z = 1
         kd_z = 3
@@ -103,10 +90,8 @@ class Quadrotor:
 
     # 返回实现无人机期望姿态的力矩
     def orientation_control(self, desired_quat = np.quaternion(1, 0, 0, 0)):
-        with self.ori_lock:
-            ori = self.ori
-        with self.w_lock:
-            wx, wy, wz = self.wx, self.wy, self.wz
+        ori = self.ori
+        wx, wy, wz = self.wx, self.wy, self.wz
         kp = np.array(self.inertia) * 2
         kd = np.array(self.inertia) * 10
         error_quat = desired_quat * ori.inverse()
@@ -166,12 +151,26 @@ class SteeringNode(Node):
         for quad in self.quadlist:
             # 创建Wrench发布者
             self.pub.append(self.create_publisher(Wrench, f"{quad.namespace}/gazebo_ros_force", 10))
-            # 创建Odometry信息订阅者，放入回调组
+            # 创建Odometry信息订阅者
             self.sub.append(self.create_subscription(Odometry,
                                                      f"{quad.namespace}/odom",
                                                      quad.odom_callback,
-                                                     10,
+                                                     1,
                                                      callback_group=self.callback_group))
+        # 创建 /clock 订阅者
+        self.sub.append(
+            self.create_subscription(Clock,
+                                     "/clock",
+                                     self.clock_callback,
+                                     QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
+                                    callback_group=self.callback_group))
+        global callback_complete
+        callback_complete = [False] * (num_of_quadrotors + 1)
+
+    def clock_callback(self, msg:Clock):
+        global sim_time
+        sim_time = msg.clock.sec + msg.clock.nanosec * 1e-9
+        callback_complete[-1] = True
 
     def counterclockwise_sort(self, center):
         for quad in self.quadlist:
@@ -190,7 +189,7 @@ class SteeringNode(Node):
                 else:
                     return 1
         self.quadlist.sort(key = cmp_to_key(cmp))
-        # self.get_logger().info("排序后："+str([quad.id for quad in self.quadlist]))
+        self.get_logger().info("排序后："+str([quad.id for quad in self.quadlist]))
 
     def send_wrench(self, quadrotor:Quadrotor, force = [0.0, 0.0, 0.0], torque=[0.0, 0.0, 0.0]):
         msg = Wrench()
@@ -203,9 +202,15 @@ class SteeringNode(Node):
         self.pub[quadrotor.id].publish(msg)
         # self.get_logger().info(f"Send force {force} and torque {torque} to quadrotor {quadrotor.id}")
 
+
+def spin_all(executor: MultiThreadedExecutor, max_time):
+    while rclpy.ok() and not all(callback_complete):
+        executor.spin_once(max_time)
+    callback_complete[:] = [False] * len(callback_complete)
+
 def main(args=None):
     rclpy.init(args=args)
-    node = SteeringNode("steering_node")
+    node = SteeringNode("quad_steering_node")
     rclpy.spin_once(node)
     start_time = sim_time
     rate = node.create_rate(30)
@@ -213,31 +218,29 @@ def main(args=None):
     # 实时更新无人机的位置和速度信息
     executor = MultiThreadedExecutor()
     executor.add_node(node)
-    odom_thread = threading.Thread(target=executor.spin)
-    odom_thread.start()
 
     # 等待3秒
     while rclpy.ok():
-        with sim_time_lock:
-            if sim_time - start_time > 3.0:
-                break
+        spin_all(executor, 1/30)
+        if sim_time - start_time > 3.0:
+            break
         rate.sleep()
 
     # 2秒内起飞到目标高度
     az = center[2] - node.quadlist[0].z     # z方向加速度
     while rclpy.ok():
-        with sim_time_lock:
-            if sim_time - start_time > 4.0:
-                break
+        spin_all(executor, 1/30)
+        if sim_time - start_time > 4.0:
+            break
         for quad in node.quadlist:
             force = [0.0, 0.0, quad.mass * (gravity + az)]
             torque = quad.orientation_control()
             node.send_wrench(quad, force, torque)
         rate.sleep()
     while rclpy.ok():
-        with sim_time_lock:
-            if sim_time - start_time > 5.0:
-                break
+        spin_all(executor, 1/30)
+        if sim_time - start_time > 5.0:
+            break
         for quad in node.quadlist:
             force = [0.0, 0.0, quad.mass * (gravity - az)]
             torque = quad.orientation_control()
@@ -246,9 +249,9 @@ def main(args=None):
 
     # 等待1秒
     while rclpy.ok():
-        with sim_time_lock:
-            if sim_time - start_time > 6.0:
-                break
+        spin_all(executor, 1/30)
+        if sim_time - start_time > 6.0:
+            break
         for quad in node.quadlist:
             force, torque = quad.vel_ori_control(0.0, 0.0, center[2])
             node.send_wrench(quad, force, torque)
@@ -260,18 +263,16 @@ def main(args=None):
     p_hat = [[0, 0]] * num   # 相邻无人机的相对位置
     d = [2 * np.pi / num] * num  # 无人机的目标角距离
     node.counterclockwise_sort(center)
-    with sim_time_lock:
-        previous_sim_time = sim_time
+    previous_sim_time = sim_time
     while rclpy.ok():
-        with sim_time_lock:
-            if sim_time - previous_sim_time < 0.01:
-                rate.sleep()
-                continue
-            else:
-                previous_sim_time = sim_time
+        spin_all(executor, 1/30)
+        if sim_time - previous_sim_time < 0.01:
+            rate.sleep()
+            continue
+        else:
+            previous_sim_time = sim_time
         for i, quad in enumerate(node.quadlist):
-            with quad.xy_lock:
-                p_bar[i] = quad.x - center[0], quad.y - center[1]
+            p_bar[i] = quad.x - center[0], quad.y - center[1]
         for i in range(-1, num-1):
             p_hat[i] = p_bar[i+1][0] - p_bar[i][0], p_bar[i+1][1] - p_bar[i][1]
         for i, quad in enumerate(node.quadlist):
