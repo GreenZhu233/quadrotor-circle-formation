@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'circle_formation_node = quadrotor_formation.circle_formation:main',
+            'circle_formation_lifecycle_node = quadrotor_formation.circle_formation_lifecycle:main',
         ],
     },
 )
