@@ -19,13 +19,10 @@
 `cd quadrotor_formation_ws/src`  
 `git clone https://github.com/GreenZhu233/quadrotor-circle-formation.git`
 
-## 编译
+## 构建
 `cd ~/quadrotor_ws`  
 `colcon build`
 
 ## 运行
 `source install/setup.bash`  
-`ros2 launch quadrotor_formation circle.launch.py`
-
-## 其他
-在 launch/circle.launch.py 中修改变量 *num_of_quadrotors* 的值，可以控制编队的无人机数量。
+`ros2 launch quadrotor_formation circle_formation_lifecycle.launch.py`
