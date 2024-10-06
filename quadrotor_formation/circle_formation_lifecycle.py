@@ -171,6 +171,7 @@ class QuadSteeringNode(LifecycleNode):
 
     def on_cleanup(self, state: State):
         self.get_logger().info(f'{self.name} cleaned up')
+        self.sorted = False
         for pub in self.pub:
             self.destroy_publisher(pub)
         for sub in self.sub:
@@ -179,6 +180,7 @@ class QuadSteeringNode(LifecycleNode):
 
     def on_shutdown(self, state: State):
         self.get_logger().info(f'{self.name} shutting down')
+        self.sorted = False
         for pub in self.pub:
             self.destroy_publisher(pub)
         for sub in self.sub:
