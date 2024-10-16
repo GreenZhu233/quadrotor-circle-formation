@@ -96,7 +96,7 @@ class QuadSteeringNode(LifecycleNode):
         self.pid_config = dict()
         self.center_changed = False
         self.get_logger().info(f'{name} initialized')
-        self.declare_parameter("num", 5)
+        self.declare_parameter("num_of_quadrotors", 5)
         self.declare_parameter("center_x", 0.0)
         self.declare_parameter("center_y", 0.0)
         self.declare_parameter("center_z", 4.0)
@@ -122,7 +122,7 @@ class QuadSteeringNode(LifecycleNode):
     def on_configure(self, state: State):
         self.get_logger().info(f'{self.name} configured')
         self.center = [0.0, 0.0, 0.0]
-        self.num = self.get_parameter("num").get_parameter_value().integer_value
+        self.num = self.get_parameter("num_of_quadrotors").get_parameter_value().integer_value
         self.center[0] = self.get_parameter("center_x").get_parameter_value().double_value
         self.center[1] = self.get_parameter("center_y").get_parameter_value().double_value
         self.center[2] = self.get_parameter("center_z").get_parameter_value().double_value
