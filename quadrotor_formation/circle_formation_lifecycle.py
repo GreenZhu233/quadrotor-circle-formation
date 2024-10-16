@@ -6,6 +6,9 @@ from nav_msgs.msg import Odometry
 import geometry_msgs.msg as geometry_msgs
 from geometry_msgs.msg import Wrench
 from message_filters import Subscriber, ApproximateTimeSynchronizer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from formation_interfaces.srv import UpdateCenter
 
 import numpy as np
 import quaternion as qt
@@ -155,6 +158,13 @@ class QuadSteeringNode(LifecycleNode):
 
         self.synchronizer = ApproximateTimeSynchronizer(self.sub, 10, 0.1)
         self.add_on_set_parameters_callback(self.on_parameter_event)
+        self.callback_group = ReentrantCallbackGroup()
+        self.update_center_service = self.create_service(
+            UpdateCenter,
+            'update_quad_center',
+            self.update_center_callback,
+            callback_group=self.callback_group
+        )
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State):
@@ -283,15 +293,6 @@ class QuadSteeringNode(LifecycleNode):
                     self.C2 = parameter.value
                 case "radius":
                     self.radius = parameter.value
-                case "center_x":
-                    self.goal_center[0] = parameter.value
-                    self.center_changed = True
-                case "center_y":
-                    self.goal_center[1] = parameter.value
-                    self.center_changed = True
-                case "center_z":
-                    self.goal_center[2] = parameter.value
-                    self.center_changed = True
                 case "rot_p":
                     self.rot_p = np.array(parameter.value)
                 case "rot_d":
@@ -311,11 +312,23 @@ class QuadSteeringNode(LifecycleNode):
         self.get_logger().info("Parameters dynamically changed...")
         return SetParametersResult(successful=True)
 
+    def update_center_callback(self, request, response):
+        self.get_logger().info(f"Center updated to ({request.x}, {request.y}, {request.z})")
+        self.goal_center = [request.x, request.y, request.z]
+        self.center_changed = True
+        rate = self.create_rate(2)
+        while self.center_changed:
+            rate.sleep()
+        response.success = True
+        return response
+
 def main(args=None):
     try:
         rclpy.init(args=args)
         node = QuadSteeringNode('quad_steering_node')
-        rclpy.spin(node)
+        executor = MultiThreadedExecutor()
+        executor.add_node(node)
+        executor.spin()
     except Exception as e:
         print('Caught exception: ' + str(e))
     finally:
