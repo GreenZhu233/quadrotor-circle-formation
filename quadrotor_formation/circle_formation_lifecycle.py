@@ -102,7 +102,7 @@ class QuadSteeringNode(LifecycleNode):
         self.declare_parameter("center_z", 4.0)
         self.declare_parameter("radius", 5.0)
 
-        self.declare_parameter("vel_p", 15.0)
+        self.declare_parameter("vel_p", 10.0)
         self.declare_parameter("vel_i", 0.1)
         self.declare_parameter("vel_d", 0.5)
         self.declare_parameter("vel_sat", 30.0)
@@ -120,7 +120,6 @@ class QuadSteeringNode(LifecycleNode):
         self.declare_parameter("C2", 1.0)
 
     def on_configure(self, state: State):
-        self.get_logger().info(f'{self.name} configured')
         self.center = [0.0, 0.0, 0.0]
         self.num = self.get_parameter("num").get_parameter_value().integer_value
         self.center[0] = self.get_parameter("center_x").get_parameter_value().double_value
@@ -152,7 +151,7 @@ class QuadSteeringNode(LifecycleNode):
 
         self.pub = []
         self.sub: list[Subscriber] = []
-        for i, quad in enumerate(self.quadlist):
+        for quad in self.quadlist:
             self.pub.append(self.create_publisher(Wrench, f"{quad.namespace}/gazebo_ros_force", 10))
             self.sub.append(Subscriber(self, Odometry, f"{quad.namespace}/odom"))
 
@@ -165,6 +164,7 @@ class QuadSteeringNode(LifecycleNode):
             self.update_center_callback,
             callback_group=self.callback_group
         )
+        self.get_logger().info(f'{self.name} configured')
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State):
